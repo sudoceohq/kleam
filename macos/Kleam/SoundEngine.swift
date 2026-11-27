@@ -49,6 +49,8 @@ final class SoundEngine {
     )
     private let voiceCount = 24
     private var outputDeviceUID = ""
+    private var configurationObserver: NSObjectProtocol?
+    private var rebuildingGraph = false
 
     func prepare(slug: String = SwitchCatalog.defaultSlug, outputUID: String = "") throws {
         outputDeviceUID = outputUID
@@ -76,12 +78,8 @@ final class SoundEngine {
             generation.append(0)
         }
 
-        engine.mainMixerNode.outputVolume = settings.volume
-        try applyOutputDevice(uid: outputDeviceUID)
-        try engine.start()
-        for player in players {
-            player.play()
-        }
+        installConfigurationObserver()
+        try setOutputDevice(uid: outputDeviceUID)
     }
 
     func loadBank(slug: String) throws {
@@ -98,24 +96,27 @@ final class SoundEngine {
 
     func update(_ settings: SoundSettings) {
         self.settings = settings
-        engine.mainMixerNode.outputVolume = settings.enabled ? settings.volume : 0
+        applyMixerVolume()
     }
 
     func setOutputDevice(uid: String) throws {
+        let deviceID = try resolveDeviceID(uid: uid)
         outputDeviceUID = uid
-        let wasRunning = engine.isRunning
-        if wasRunning {
+        for player in players {
+            player.stop()
+        }
+        if engine.isRunning {
             engine.stop()
         }
-        try applyOutputDevice(uid: uid)
-        if wasRunning {
-            try engine.start()
-            for player in players {
-                if !player.isPlaying {
-                    player.play()
-                }
-            }
+        try assignOutputDevice(deviceID)
+        if !players.isEmpty {
+            try reconnectGraph()
         }
+        try engine.start()
+        for player in players {
+            player.play()
+        }
+        applyMixerVolume()
     }
 
     static func outputDevices() -> [OutputDevice] {
@@ -274,17 +275,70 @@ final class SoundEngine {
         return output
     }
 
-    private func applyOutputDevice(uid: String) throws {
-        let deviceID = try resolveDeviceID(uid: uid)
+    /// Changing the output device posts `AVAudioEngineConfigurationChange` and stops the engine.
+    /// The environment graph stays wired to the previous sample rate, so playback stays silent
+    /// until the process is restarted. Rebuild the graph and start the players again.
+    private func installConfigurationObserver() {
+        guard configurationObserver == nil else { return }
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleConfigurationChange()
+        }
+    }
+
+    private func handleConfigurationChange() {
+        guard !players.isEmpty, !rebuildingGraph else { return }
+        rebuildingGraph = true
+        defer { rebuildingGraph = false }
+        do {
+            for player in players {
+                player.stop()
+            }
+            try reconnectGraph()
+            if !engine.isRunning {
+                try engine.start()
+            }
+            for player in players {
+                player.play()
+            }
+            applyMixerVolume()
+        } catch {
+            return
+        }
+    }
+
+    private func reconnectGraph() throws {
+        guard let format = down.first?.format else { return }
+        engine.disconnectNodeOutput(environment)
+        for player in players {
+            engine.disconnectNodeOutput(player)
+        }
+        engine.connect(environment, to: engine.mainMixerNode, format: nil)
+        for player in players {
+            engine.connect(player, to: environment, format: format)
+            player.renderingAlgorithm = .HRTFHQ
+        }
+    }
+
+    private func applyMixerVolume() {
+        engine.mainMixerNode.outputVolume = settings.enabled ? settings.volume : 0
+    }
+
+    private func assignOutputDevice(_ deviceID: AudioDeviceID) throws {
+        guard let unit = engine.outputNode.audioUnit else {
+            throw EngineError.outputDevice
+        }
         var id = deviceID
-        let size = UInt32(MemoryLayout<AudioDeviceID>.size)
         let status = AudioUnitSetProperty(
-            engine.outputNode.audioUnit!,
+            unit,
             kAudioOutputUnitProperty_CurrentDevice,
             kAudioUnitScope_Global,
             0,
             &id,
-            size
+            UInt32(MemoryLayout<AudioDeviceID>.size)
         )
         if status != noErr {
             throw EngineError.outputDevice
