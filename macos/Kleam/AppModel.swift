@@ -23,7 +23,9 @@ final class AppModel: ObservableObject {
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
     private var trustTimer: Timer?
+    private var activeObserver: NSObjectProtocol?
     private var heldModifiers = Set<UInt16>()
+    private var relaunching = false
 
     init() {
         let defaults = UserDefaults.standard
@@ -55,6 +57,13 @@ final class AppModel: ObservableObject {
         installMonitors()
         refreshTrust(prompt: true)
         trustTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            self?.refreshTrust(prompt: false)
+        }
+        activeObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
             self?.refreshTrust(prompt: false)
         }
     }
@@ -273,12 +282,49 @@ final class AppModel: ObservableObject {
     }
 
     private func refreshTrust(prompt: Bool) {
+        let now: Bool
         if prompt {
             let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
             let options = [key: true] as CFDictionary
-            trusted = AXIsProcessTrustedWithOptions(options)
+            now = AXIsProcessTrustedWithOptions(options)
         } else {
-            trusted = AXIsProcessTrusted()
+            now = AXIsProcessTrusted()
+        }
+        let becameTrusted = now && !trusted
+        trusted = now
+        if becameTrusted {
+            relaunchForAccessibility()
+        }
+    }
+
+    private func relaunchForAccessibility() {
+        guard !relaunching else { return }
+        relaunching = true
+        trustTimer?.invalidate()
+        let url = Bundle.main.bundleURL
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        let pid = ProcessInfo.processInfo.processIdentifier
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { app, error in
+            DispatchQueue.main.async {
+                if error == nil, let app, app.processIdentifier != pid {
+                    NSApp.terminate(nil)
+                    return
+                }
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                process.arguments = ["-n", url.path]
+                do {
+                    try process.run()
+                } catch {
+                    self.relaunching = false
+                    self.status = "Restart Kleam to use Accessibility"
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    NSApp.terminate(nil)
+                }
+            }
         }
     }
 }
