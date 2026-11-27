@@ -13,6 +13,7 @@ final class AppModel: ObservableObject {
     @Published var outputDeviceUID: String
     @Published var outputDevices: [OutputDevice]
     @Published var trusted: Bool
+    @Published var inputMonitoring: Bool
     @Published var lastCents: String
     @Published var status: String
     @Published var showAbout = false
@@ -23,7 +24,13 @@ final class AppModel: ObservableObject {
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
     private var trustTimer: Timer?
+    private var inputTimer: Timer?
+    private var inputObserver: NSObjectProtocol?
     private var heldModifiers = Set<UInt16>()
+    private var askedForInputMonitoring = false
+    private let hidKeyboard = HIDKeyboard()
+    private var recentStrokes: [UInt32: TimeInterval] = [:]
+    private var lastMuteUptime: TimeInterval = -.greatestFiniteMagnitude
 
     init() {
         let defaults = UserDefaults.standard
@@ -39,6 +46,7 @@ final class AppModel: ObservableObject {
         outputDeviceUID = defaults.string(forKey: Keys.outputDeviceUID) ?? ""
         outputDevices = SoundEngine.outputDevices()
         trusted = AXIsProcessTrusted()
+        inputMonitoring = HIDKeyboard.accessGranted()
         lastCents = "a new pitch each press"
         status = ""
         showAbout = false
@@ -53,6 +61,10 @@ final class AppModel: ObservableObject {
         }
         applyAudio()
         installMonitors()
+        refreshInputMonitoring(prompt: true)
+        inputTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            self?.refreshInputMonitoring(prompt: false)
+        }
         refreshTrust(prompt: true)
         trustTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             self?.refreshTrust(prompt: false)
@@ -166,14 +178,25 @@ final class AppModel: ObservableObject {
             self?.handleMouse(event)
             return event
         }
+        hidKeyboard.onKey = { [weak self] keyCode, down in
+            self?.handleHardwareKey(keyCode: keyCode, down: down)
+        }
+        inputObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshInputMonitoring(prompt: false)
+        }
     }
 
     private func handle(_ event: NSEvent) {
         if isMuteHotkey(event) {
-            if event.type == .keyDown && !event.isARepeat {
-                enabled.toggle()
-                applyAudio()
+            let down = event.type == .keyDown
+            if down && !event.isARepeat {
+                toggleMute()
             }
+            _ = claimStroke(keyCode: event.keyCode, down: down)
             return
         }
         if event.type == .flagsChanged {
@@ -181,8 +204,20 @@ final class AppModel: ObservableObject {
             return
         }
         if event.isARepeat || Self.modifierCodes.contains(event.keyCode) { return }
-        let stroke: Stroke = event.type == .keyUp ? .up : .down
-        note(engine.play(keyCode: event.keyCode, stroke: stroke))
+        playStroke(keyCode: event.keyCode, down: event.type == .keyDown)
+    }
+
+    /// Lock-screen letter events never reach the global NSEvent monitor. Hardware
+    /// reports still arrive. Modifiers stay on the flag-change path, which already
+    /// works while locked. `claimStroke` drops the duplicate when both sources fire.
+    private func handleHardwareKey(keyCode: UInt16, down: Bool) {
+        if Self.modifierCodes.contains(keyCode) { return }
+        if keyCode == Self.muteKeyCode && muteChordHeld() {
+            if down { toggleMute() }
+            _ = claimStroke(keyCode: keyCode, down: down)
+            return
+        }
+        playStroke(keyCode: keyCode, down: down)
     }
 
     private func handleMouse(_ event: NSEvent) {
@@ -212,10 +247,69 @@ final class AppModel: ObservableObject {
         let down = modifierIsDown(code, flags: flagsRaw(event))
         if down {
             guard heldModifiers.insert(code).inserted else { return }
-            note(engine.play(keyCode: code, stroke: .down))
+            playStroke(keyCode: code, down: true)
         } else {
             guard heldModifiers.remove(code) != nil else { return }
-            _ = engine.play(keyCode: code, stroke: .up)
+            playStroke(keyCode: code, down: false)
+        }
+    }
+
+    private func playStroke(keyCode: UInt16, down: Bool) {
+        guard claimStroke(keyCode: keyCode, down: down) else { return }
+        if down {
+            note(engine.play(keyCode: keyCode, stroke: .down))
+        } else {
+            _ = engine.play(keyCode: keyCode, stroke: .up)
+        }
+    }
+
+    private func claimStroke(keyCode: UInt16, down: Bool) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        let token = (UInt32(keyCode) << 1) | (down ? 1 : 0)
+        if let last = recentStrokes[token], now - last < 0.05 {
+            return false
+        }
+        recentStrokes[token] = now
+        return true
+    }
+
+    private func toggleMute() {
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - lastMuteUptime < 0.25 { return }
+        lastMuteUptime = now
+        enabled.toggle()
+        applyAudio()
+    }
+
+    private func muteChordHeld() -> Bool {
+        let control = heldModifiers.contains(0x3B) || heldModifiers.contains(0x3E)
+        let option = heldModifiers.contains(0x3A) || heldModifiers.contains(0x3D)
+        let command = heldModifiers.contains(0x37) || heldModifiers.contains(0x36)
+        return control && option && command
+    }
+
+    private func refreshInputMonitoring(prompt: Bool) {
+        if prompt && !HIDKeyboard.accessGranted() && !askedForInputMonitoring {
+            askedForInputMonitoring = true
+            HIDKeyboard.requestAccess()
+        }
+        let granted = HIDKeyboard.accessGranted()
+        if inputMonitoring != granted {
+            inputMonitoring = granted
+        }
+        if granted {
+            hidKeyboard.start()
+        }
+    }
+
+    func revealInputMonitoring() {
+        let candidates = [
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ListenEvent",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
+        ]
+        for candidate in candidates {
+            guard let url = URL(string: candidate) else { continue }
+            if NSWorkspace.shared.open(url) { return }
         }
     }
 

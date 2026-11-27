@@ -43,10 +43,12 @@ swiftc \
   -framework ApplicationServices \
   -framework CoreAudio \
   -framework AudioToolbox \
+  -framework IOKit \
   -o "$bin/Kleam" \
   "$src/KleamApp.swift" \
   "$src/AppModel.swift" \
   "$src/SoundEngine.swift" \
+  "$src/HIDKeys.swift" \
   "$src/SwitchCatalog.swift" \
   "$src/MenuView.swift"
 
