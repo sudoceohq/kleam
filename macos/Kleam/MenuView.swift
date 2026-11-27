@@ -28,6 +28,9 @@ struct MenuView: View {
             if !model.trusted {
                 accessNote
             }
+            if !model.inputMonitoring {
+                inputMonitoringNote
+            }
             if !model.status.isEmpty {
                 Text(model.status)
                     .font(.caption)
@@ -178,6 +181,19 @@ struct MenuView: View {
             .pickerStyle(.menu)
         }
         .padding(.vertical, 4)
+    }
+
+    private var inputMonitoringNote: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Kleam needs Input Monitoring to play letter keys on the lock screen.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Open Input Monitoring Settings") {
+                model.revealInputMonitoring()
+            }
+        }
+        .padding(.top, 8)
     }
 
     private var accessNote: some View {
