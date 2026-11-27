@@ -13,6 +13,25 @@ const INITIAL: EngineOptions = {
 
 const PREVIEW = ["KeyS", "KeyU", "KeyP", "KeyE", "KeyR"];
 const GITHUB_URL = "https://github.com/sudoceohq/kleam";
+const LATEST_RELEASE_API = "https://api.github.com/repos/sudoceohq/kleam/releases/latest";
+const LATEST_RELEASE_PAGE = "https://github.com/sudoceohq/kleam/releases/latest";
+
+async function downloadLatestMac() {
+  try {
+    const response = await fetch(LATEST_RELEASE_API, {
+      headers: { Accept: "application/vnd.github+json" },
+    });
+    if (!response.ok) throw new Error(`Release lookup failed (${response.status})`);
+    const release = (await response.json()) as {
+      assets?: { name: string; browser_download_url: string }[];
+    };
+    const asset = release.assets?.find((item) => item.name.endsWith("-macos.zip"));
+    if (!asset) throw new Error("Mac zip missing from the latest release");
+    window.location.assign(asset.browser_download_url);
+  } catch {
+    window.open(LATEST_RELEASE_PAGE, "_blank", "noopener");
+  }
+}
 
 type LastHit = {
   code: string;
@@ -219,6 +238,9 @@ export default function App() {
         </a>
         <div className="nav-actions">
           <span className="nav-note">Free &amp; open source</span>
+          <button className="ghost-cta" type="button" onClick={() => void downloadLatestMac()}>
+            Download
+          </button>
           <a className="ghost-cta" href={GITHUB_URL} target="_blank" rel="noreferrer">
             GitHub
           </a>
@@ -239,7 +261,10 @@ export default function App() {
             menubar presence.
           </p>
           <div className="cta-row">
-            <a className="cta" href={GITHUB_URL} target="_blank" rel="noreferrer">
+            <button className="cta" type="button" onClick={() => void downloadLatestMac()}>
+              Download for Mac
+            </button>
+            <a className="cta soft" href={GITHUB_URL} target="_blank" rel="noreferrer">
               Get the source
             </a>
             <button className="cta soft" type="button" onClick={runPreview}>
