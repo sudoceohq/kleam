@@ -64,7 +64,7 @@ function baseRate(code: string): number {
 async function loadBank(ctx: AudioContext, slug: string, stroke: Stroke): Promise<AudioBuffer[]> {
   const buffers = await Promise.all(
     Array.from({ length: VARIANTS }, async (_, index) => {
-      const response = await fetch(`/sounds/${slug}/${stroke}-${index}.wav`);
+      const response = await fetch(`${import.meta.env.BASE_URL}sounds/${slug}/${stroke}-${index}.wav`);
       if (!response.ok) throw new Error(`Missing ${slug}/${stroke}-${index}.wav`);
       return ctx.decodeAudioData(await response.arrayBuffer());
     }),
@@ -93,7 +93,7 @@ export class KleamEngine {
     return this.slug;
   }
 
-  /** Reload down/up banks from `/sounds/{slug}/`. Mouse wavs are unused on web. */
+  /** Reload down/up banks from `{base}sounds/{slug}/`. Mouse wavs are unused on web. */
   setSwitch(slug: string) {
     if (slug === this.slug && this.down.length > 0 && this.up.length > 0) return;
     this.slug = slug;
