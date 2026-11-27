@@ -16,6 +16,7 @@ final class AppModel: ObservableObject {
     @Published var lastCents: String
     @Published var status: String
     @Published var showAbout = false
+    @Published var switchMenuOpen = false
 
     let engine = SoundEngine()
     private var globalMonitor: Any?
@@ -42,6 +43,7 @@ final class AppModel: ObservableObject {
         lastCents = "a new pitch each press"
         status = ""
         showAbout = false
+        switchMenuOpen = false
     }
 
     func start() {
@@ -81,18 +83,23 @@ final class AppModel: ObservableObject {
 
     func selectSwitch(_ slug: String) {
         let resolved = SwitchCatalog.resolvedSlug(slug)
-        if resolved == selectedSwitch {
-            preview()
-            return
-        }
+        guard resolved != selectedSwitch else { return }
         do {
             try engine.loadBank(slug: resolved)
             selectedSwitch = resolved
             applyAudio()
             status = ""
-            preview()
         } catch {
             status = "Couldn't load switch"
+        }
+    }
+
+    func previewSwitch(_ slug: String) {
+        do {
+            try engine.preview(slug: slug)
+            status = ""
+        } catch {
+            status = "Couldn't preview switch"
         }
     }
 
@@ -111,21 +118,6 @@ final class AppModel: ObservableObject {
             status = ""
         } catch {
             status = "Couldn't set output"
-        }
-    }
-
-    func preview() {
-        let codes: [UInt16] = [0x01, 0x20, 0x23, 0x0E, 0x0F]
-        for (index, code) in codes.enumerated() {
-            let downDelay = Double(index) * 0.2
-            DispatchQueue.main.asyncAfter(deadline: .now() + downDelay) {
-                self.note(self.engine.play(keyCode: code, stroke: .down))
-            }
-            if upDown {
-                DispatchQueue.main.asyncAfter(deadline: .now() + downDelay + 0.09) {
-                    _ = self.engine.play(keyCode: code, stroke: .up)
-                }
-            }
         }
     }
 

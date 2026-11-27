@@ -100,68 +100,125 @@ struct MenuView: View {
     }
 
     private var switches: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let selected = SwitchCatalog.pack(slug: model.selectedSwitch)
+        return VStack(alignment: .leading, spacing: 6) {
             Text("Switch")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .padding(.bottom, 2)
-            ForEach(SwitchCatalog.all) { pack in
-                switchRow(pack)
+            Button {
+                model.switchMenuOpen.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    swatch(selected.colors)
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 6) {
+                            Text(selected.name)
+                            if selected.isNew { newBadge }
+                        }
+                        Text(selected.feel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.primary.opacity(0.06))
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Switch")
+            .accessibilityValue(selected.name)
+
+            if model.switchMenuOpen {
+                VStack(spacing: 2) {
+                    ForEach(SwitchCatalog.all) { pack in
+                        switchOption(pack)
+                    }
+                }
+                .padding(4)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.primary.opacity(0.04))
+                )
             }
         }
         .padding(.vertical, 6)
     }
 
-    private func switchRow(_ pack: SwitchPack) -> some View {
+    private func switchOption(_ pack: SwitchPack) -> some View {
         let selected = model.selectedSwitch == pack.slug
-        return Button {
-            model.selectSwitch(pack.slug)
-        } label: {
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: pack.colors,
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .frame(width: 12, height: 12)
-                    .overlay {
-                        Circle()
-                            .strokeBorder(.black.opacity(0.12), lineWidth: 0.5)
-                    }
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        Text(pack.name)
-                            .foregroundStyle(.primary)
-                        if pack.isNew {
-                            Text("New")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
+        return HStack(spacing: 4) {
+            Button {
+                model.selectSwitch(pack.slug)
+                model.switchMenuOpen = false
+            } label: {
+                HStack(spacing: 8) {
+                    swatch(pack.colors)
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 6) {
+                            Text(pack.name)
+                                .foregroundStyle(.primary)
+                            if pack.isNew { newBadge }
                         }
+                        Text(pack.feel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
-                    Text(pack.feel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if selected {
+                        Image(systemName: "checkmark")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                Spacer(minLength: 0)
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(selected ? Color.primary.opacity(0.06) : Color.clear)
-            )
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            Button {
+                model.previewSwitch(pack.slug)
+            } label: {
+                Image(systemName: "play.fill")
+                    .font(.caption2)
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(Color.primary.opacity(0.08)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Preview \(pack.name)")
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+    }
+
+    private func swatch(_ colors: [Color]) -> some View {
+        Circle()
+            .fill(
+                LinearGradient(
+                    colors: colors,
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .frame(width: 12, height: 12)
+            .overlay {
+                Circle()
+                    .strokeBorder(.black.opacity(0.12), lineWidth: 0.5)
+            }
+    }
+
+    private var newBadge: some View {
+        Text("New")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
     }
 
     private var outputPicker: some View {
