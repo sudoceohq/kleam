@@ -51,6 +51,8 @@ final class SoundEngine {
     private var outputDeviceUID = ""
     private var configurationObserver: NSObjectProtocol?
     private var rebuildingGraph = false
+    private var previewToken = 0
+    private var previewCache: [String: (down: AVAudioPCMBuffer, up: AVAudioPCMBuffer)] = [:]
 
     func prepare(slug: String = SwitchCatalog.defaultSlug, outputUID: String = "") throws {
         outputDeviceUID = outputUID
@@ -117,6 +119,52 @@ final class SoundEngine {
             player.play()
         }
         applyMixerVolume()
+    }
+
+    /// Plays one click from `slug` without changing the active bank.
+    /// Audible even while muted, so a menu preview can be heard.
+    func preview(slug: String) throws {
+        if !engine.isRunning {
+            handleConfigurationChange()
+        }
+        guard engine.isRunning else { throw EngineError.outputDevice }
+        let resolved = SwitchCatalog.resolvedSlug(slug)
+        let sample = try previewSample(slug: resolved)
+        let level: Float = settings.volume > 0.05 ? settings.volume : 0.82
+        engine.mainMixerNode.outputVolume = level
+        _ = schedule(
+            sample.down,
+            pitch: 1,
+            volume: 1,
+            x: 0,
+            y: 0.05,
+            z: settings.spatial ? -0.55 : 0,
+            spatial: settings.spatial,
+            stroke: .down,
+            centsBase: 1
+        )
+        if settings.upDown {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+                guard let self else { return }
+                _ = self.schedule(
+                    sample.up,
+                    pitch: 1,
+                    volume: 0.9,
+                    x: 0,
+                    y: 0.02,
+                    z: self.settings.spatial ? -0.45 : 0,
+                    spatial: self.settings.spatial,
+                    stroke: .up,
+                    centsBase: 1
+                )
+            }
+        }
+        previewToken += 1
+        let token = previewToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self, self.previewToken == token else { return }
+            self.applyMixerVolume()
+        }
     }
 
     static func outputDevices() -> [OutputDevice] {
@@ -343,6 +391,18 @@ final class SoundEngine {
         if status != noErr {
             throw EngineError.outputDevice
         }
+    }
+
+    private func previewSample(slug: String) throws -> (down: AVAudioPCMBuffer, up: AVAudioPCMBuffer) {
+        if let cached = previewCache[slug] {
+            return cached
+        }
+        let sample = (
+            down: try loadSample(slug: slug, name: "down-0"),
+            up: try loadSample(slug: slug, name: "up-0")
+        )
+        previewCache[slug] = sample
+        return sample
     }
 
     private func resolveDeviceID(uid: String) throws -> AudioDeviceID {
